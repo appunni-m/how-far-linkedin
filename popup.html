@@ -37,6 +37,59 @@
       <button id="saveSetup" class="primary-button" type="button">Save setup</button>
       <p id="status" class="status" role="status">Your home location and key stay in this browser.</p>
 
+      <section class="metrics" aria-labelledby="metricsTitle">
+        <div class="metrics-heading">
+          <h2 id="metricsTitle">Google Maps usage</h2>
+          <span class="estimate-tag">ESTIMATE</span>
+        </div>
+        <div class="cost-total">
+          <div>
+            <span class="cost-caption">Estimated cost this month</span>
+            <strong id="estimatedCost">$0.0000</strong>
+          </div>
+          <span class="currency">USD</span>
+        </div>
+        <div class="request-summary">
+          <span><strong id="requestsSent">0</strong> requests sent</span>
+          <span><strong id="successfulRequests">0</strong> successful</span>
+        </div>
+
+        <div class="sku-usage">
+          <div class="sku-row">
+            <div class="sku-copy">
+              <strong>Home location · Text Search Pro</strong>
+              <span id="homeUsageDetail">0 successful · 5,000 free</span>
+            </div>
+            <strong id="homeUsageCost" class="sku-cost">$0.0000</strong>
+          </div>
+          <div class="usage-track"><span id="homeUsageMeter"></span></div>
+
+          <div class="sku-row office-sku-row">
+            <div class="sku-copy">
+              <strong>Office routes · Enterprise + Atmosphere</strong>
+              <span id="officeUsageDetail">0 successful · 1,000 free</span>
+            </div>
+            <strong id="officeUsageCost" class="sku-cost">$0.0000</strong>
+          </div>
+          <div class="usage-track"><span id="officeUsageMeter"></span></div>
+        </div>
+
+        <div class="pricing-row">
+          <label for="pricingRegion">Google Cloud billing region</label>
+          <select id="pricingRegion">
+            <option value="global">Global pricing</option>
+            <option value="india">India pricing</option>
+          </select>
+        </div>
+        <p id="pricingRates" class="pricing-rates">After free usage: $32 and $40 per 1,000 requests.</p>
+        <p class="metrics-note">Tracking starts after v0.2.4 is loaded; earlier use isn’t included. Successful API requests count as billable events. This estimate assumes the extension is the only usage on your billing account. Other projects share the free caps and volume tiers, so Google Cloud billing shows the actual amount.</p>
+        <div class="metrics-links">
+          <a id="pricingLink" href="https://developers.google.com/maps/billing-and-pricing/pricing" target="_blank" rel="noopener noreferrer">Google rate sheet</a>
+          <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">Cloud billing</a>
+        </div>
+        <p class="pricing-date">Public rates checked October 2, 2026.</p>
+      </section>
+
       <aside class="privacy-note">
         The key is stored locally, but browser storage can be inspected. Use a dedicated key restricted to Places API (New), set a quota, and don’t reuse a key from another app. Your home address is sent to Google for distance lookup.
       </aside>

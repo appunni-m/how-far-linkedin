@@ -2,6 +2,9 @@ const PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
 const OFFICE_FIELD_MASK = "places.displayName,places.formattedAddress,routingSummaries";
 const HOME_FIELD_MASK = "places.location";
 const RATE_LIMIT_STORAGE_KEY = "howFarRequestRateV1";
+const USAGE_STORAGE_KEY = "howFarUsageV1";
+const HOME_SEARCH_USAGE = "homeTextSearchPro";
+const OFFICE_SEARCH_USAGE = "officeTextSearchEnterpriseAtmosphere";
 const REQUEST_WINDOW_MS = 60_000;
 const MIN_REQUEST_GAP_MS = 1_000;
 const MAX_REQUESTS_PER_MINUTE = 30;
@@ -12,6 +15,35 @@ let homeLookupInFlight = null;
 let lastRequestAt = 0;
 let apiRequestQueue = Promise.resolve();
 const officeLookupInFlight = new Map();
+
+function currentUsageMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+async function recordApiRequest(usageType, succeeded) {
+  try {
+    const month = currentUsageMonth();
+    const stored = await chrome.storage.local.get(USAGE_STORAGE_KEY);
+    const previous = stored[USAGE_STORAGE_KEY];
+    const usage = previous?.month === month
+      ? {
+          ...previous,
+          requestsSent: { ...(previous.requestsSent || {}) },
+          successfulRequests: { ...(previous.successfulRequests || {}) }
+        }
+      : { month, requestsSent: {}, successfulRequests: {} };
+
+    usage.requestsSent[usageType] = (Number(usage.requestsSent[usageType]) || 0) + 1;
+    if (succeeded) {
+      usage.successfulRequests[usageType] = (Number(usage.successfulRequests[usageType]) || 0) + 1;
+    }
+    usage.updatedAt = Date.now();
+    await chrome.storage.local.set({ [USAGE_STORAGE_KEY]: usage });
+  } catch (_error) {
+    // Metrics should never block a Places lookup.
+  }
+}
 
 const pause = (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs));
 
@@ -80,7 +112,7 @@ async function setQuotaCooldown(response) {
   });
 }
 
-async function searchPlaces(textQuery, apiKey, fieldMask, routingOrigin) {
+async function searchPlaces(textQuery, apiKey, fieldMask, routingOrigin, usageType) {
   const body = { textQuery, pageSize: 8 };
   if (routingOrigin) {
     body.routingParameters = {
@@ -91,26 +123,33 @@ async function searchPlaces(textQuery, apiKey, fieldMask, routingOrigin) {
   }
 
   return queuePlacesRequest(async () => {
-    const response = await fetch(PLACES_SEARCH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": fieldMask
-      },
-      body: JSON.stringify(body)
-    });
+    let response;
+    try {
+      response = await fetch(PLACES_SEARCH_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": fieldMask
+        },
+        body: JSON.stringify(body)
+      });
 
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const reason = payload?.error?.message || `Google Places returned HTTP ${response.status}`;
-      const isQuotaError = response.status === 429 ||
-        payload?.error?.status === "RESOURCE_EXHAUSTED" ||
-        /rate.?limit|quota|too many requests/i.test(reason);
-      if (isQuotaError) await setQuotaCooldown(response);
-      throw new Error(reason);
+      const payload = await response.json().catch(() => ({}));
+      await recordApiRequest(usageType, response.ok);
+      if (!response.ok) {
+        const reason = payload?.error?.message || `Google Places returned HTTP ${response.status}`;
+        const isQuotaError = response.status === 429 ||
+          payload?.error?.status === "RESOURCE_EXHAUSTED" ||
+          /rate.?limit|quota|too many requests/i.test(reason);
+        if (isQuotaError) await setQuotaCooldown(response);
+        throw new Error(reason);
+      }
+      return payload;
+    } catch (error) {
+      if (!response) await recordApiRequest(usageType, false);
+      throw error;
     }
-    return payload;
   });
 }
 
@@ -119,7 +158,7 @@ async function getHomeCoordinates(homeLocation, apiKey) {
   if (homeLookupInFlight?.query === homeLocation) return homeLookupInFlight.promise;
 
   const promise = (async () => {
-    const payload = await searchPlaces(homeLocation, apiKey, HOME_FIELD_MASK);
+    const payload = await searchPlaces(homeLocation, apiKey, HOME_FIELD_MASK, null, HOME_SEARCH_USAGE);
     const place = payload.places?.find((candidate) =>
       Number.isFinite(candidate.location?.latitude) && Number.isFinite(candidate.location?.longitude)
     );
@@ -143,7 +182,7 @@ async function getHomeCoordinates(homeLocation, apiKey) {
 
 async function getOfficeDistance(job, homeCoordinates, apiKey) {
   const query = `${job.company} office in ${job.city}`;
-  const payload = await searchPlaces(query, apiKey, OFFICE_FIELD_MASK, homeCoordinates);
+  const payload = await searchPlaces(query, apiKey, OFFICE_FIELD_MASK, homeCoordinates, OFFICE_SEARCH_USAGE);
   const places = payload.places || [];
   const summaries = payload.routingSummaries || [];
   const candidates = places.map((place, index) => ({

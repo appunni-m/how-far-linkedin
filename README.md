@@ -18,6 +18,8 @@ How Far? adds matching company office addresses and estimated home-to-office dri
 - If a company does not have a suitable Google Maps office listing, the card reports that no office was found.
 - Duplicate cards in the same scan share one lookup, and simultaneous requests for the same company, city, and home location are coalesced.
 - Google requests are serialized, capped at 30 per rolling minute, and spaced at least one second apart. The limiter state persists across browser restarts. Google quota errors start a one-minute cooldown.
+- The extension popup tracks sent requests and successful billable Text Search events for the local calendar month. It estimates free and paid use separately for the home lookup (Text Search Pro) and office route lookup (Text Search Enterprise + Atmosphere, because the request asks for `routingSummaries`).
+- The popup includes Global and India public rate lists. Its estimate only counts this extension's traffic and assumes the billing account's free allowance and volume tiers have no other project usage; Google Cloud billing remains authoritative.
 
 ## Caching and request limits
 
