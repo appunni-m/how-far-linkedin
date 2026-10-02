@@ -94,8 +94,13 @@
       .pin { flex:0 0 auto; width:18px; height:18px; border-radius:50%; background:#d9efe2; color:#167449; font-size:12px; font-weight:700; line-height:18px; text-align:center; }
       .content { min-width:0; flex:1; }
       .distance { display:block; color:#176b46; font-size:12px; font-weight:700; line-height:1.3; }
-      .address { display:block; margin-top:3px; color:#46584e; font-size:10px; line-height:1.35; overflow-wrap:anywhere; }
-      .office { display:block; margin-top:3px; color:#78877e; font-size:9px; line-height:1.3; }
+      .offices { display:grid; gap:6px; margin-top:7px; }
+      .office-item { display:flex; align-items:flex-start; gap:7px; padding:6px 7px; border-left:3px solid var(--accent); border-radius:6px; background:var(--tint); }
+      .number { flex:0 0 auto; width:17px; height:17px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; line-height:17px; text-align:center; }
+      .office-content { min-width:0; }
+      .office-distance { display:block; color:#23372d; font-size:10px; font-weight:700; line-height:1.35; }
+      .office-name { display:block; margin-top:2px; color:#40564a; font-size:10px; line-height:1.35; }
+      .office-address { display:block; margin-top:2px; color:#59695f; font-size:9px; line-height:1.35; overflow-wrap:anywhere; }
       .loading .distance { color:#66756c; font-weight:600; }
       .error { border-color:#eedbd8; background:#fff8f7; }
       .error .distance { color:#9b473d; }
@@ -112,19 +117,17 @@
     content.className = "content";
     const distance = document.createElement("strong");
     distance.className = "distance";
-    distance.textContent = "Finding nearest office…";
-    const address = document.createElement("span");
-    address.className = "address";
-    const office = document.createElement("span");
-    office.className = "office";
-    content.append(distance, address, office);
+    distance.textContent = "Finding nearby offices…";
+    const offices = document.createElement("div");
+    offices.className = "offices";
+    content.append(distance, offices);
     const attribution = document.createElement("span");
     attribution.className = "attribution";
     attribution.innerHTML = '<span class="g">Google</span> Maps';
     row.append(pin, content, attribution);
     shadow.append(style, row);
     card.append(host);
-    return { host, row, distance, address, office };
+    return { host, row, distance, offices };
   }
 
   function showSetupNotice() {
@@ -153,20 +156,52 @@
   function displayDistance(item, result) {
     if (!item?.host?.isConnected) return;
     item.row.classList.remove("loading", "error");
+    item.offices.replaceChildren();
     if (result.status !== "found") {
       item.row.classList.add("error");
       item.distance.textContent = result.message || "No local office found.";
-      item.address.textContent = "Check that the employer has a Google Maps office listing in this city.";
-      item.office.textContent = "";
       return;
     }
 
-    const km = result.distanceMeters / 1000;
-    const distanceText = km >= 1 ? `${km.toFixed(km >= 100 ? 0 : 1)} km` : `${Math.round(result.distanceMeters)} m`;
-    const mins = result.durationSeconds == null ? "" : ` · ~${Math.max(1, Math.round(result.durationSeconds / 60))} min drive`;
-    item.distance.textContent = `${distanceText}${mins}`;
-    item.address.textContent = result.address;
-    item.office.textContent = `Nearest matching ${result.officeName} office · driving estimate`;
+    const offices = result.offices || [];
+    item.distance.textContent = `${offices.length} matching office${offices.length === 1 ? "" : "s"} · closest first`;
+    const colors = [
+      ["#16845b", "#e8f5ee"], ["#2867d7", "#eaf1ff"],
+      ["#d87518", "#fff2e7"], ["#8355c7", "#f1eaff"],
+      ["#bd4353", "#fff0f1"], ["#0b8490", "#e7f7f8"],
+      ["#7a7f15", "#f6f6e5"], ["#505d6a", "#edf0f2"]
+    ];
+
+    offices.forEach((office, index) => {
+      const [accent, tint] = colors[index % colors.length];
+      const row = document.createElement("div");
+      row.className = "office-item";
+      row.style.setProperty("--accent", accent);
+      row.style.setProperty("--tint", tint);
+
+      const number = document.createElement("span");
+      number.className = "number";
+      number.textContent = String(index + 1);
+
+      const details = document.createElement("div");
+      details.className = "office-content";
+      const distance = document.createElement("strong");
+      distance.className = "office-distance";
+      const km = office.distanceMeters / 1000;
+      const distanceText = km >= 1 ? `${km.toFixed(km >= 100 ? 0 : 1)} km` : `${Math.round(office.distanceMeters)} m`;
+      const mins = office.durationSeconds == null ? "" : ` · ~${Math.max(1, Math.round(office.durationSeconds / 60))} min drive`;
+      distance.textContent = `${distanceText}${mins}`;
+
+      const name = document.createElement("span");
+      name.className = "office-name";
+      name.textContent = office.name;
+      const address = document.createElement("span");
+      address.className = "office-address";
+      address.textContent = office.address;
+      details.append(distance, name, address);
+      row.append(number, details);
+      item.offices.append(row);
+    });
   }
 
   function scheduleScan(delay = 450) {
