@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>How Far?</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12Z" />
+            <circle cx="12" cy="9" r="2.5" />
+            <path d="m12 6.5 1.1 2.1-1.1 4-1.1-4L12 6.5Z" class="needle" />
+          </svg>
+        </div>
+        <div>
+          <h1>How Far?</h1>
+          <p class="subtitle">One-time setup · results appear on LinkedIn</p>
+        </div>
+      </header>
+
+      <section class="form-block">
+        <label for="homeLocation">Your home location</label>
+        <input id="homeLocation" type="text" autocomplete="street-address" placeholder="Full address for accurate distances">
+        <p class="helper">Used as the start point for each office route.</p>
+      </section>
+
+      <section class="form-block">
+        <label for="apiKey">Google Places API key</label>
+        <input id="apiKey" type="password" autocomplete="off" placeholder="Paste your API key">
+        <p class="helper">Enable Places API (New) and billing in your Google Cloud project.</p>
+      </section>
+
+      <button id="saveSetup" class="primary-button" type="button">Save setup</button>
+      <p id="status" class="status" role="status">Your home location and key stay in this browser.</p>
+
+      <aside class="privacy-note">
+        The key is stored locally, but browser storage can be inspected. Use a dedicated key restricted to Places API (New), set a quota, and don’t reuse a key from another app. Your home address is sent to Google for distance lookup.
+      </aside>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
