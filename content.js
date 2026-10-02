@@ -1,5 +1,5 @@
 (() => {
-  if (!/^\/jobs\/(?:search|collections)\//.test(location.pathname)) return;
+  if (!/^\/jobs\/(?:search|search-results|collections)\//.test(location.pathname)) return;
 
   const cardSelectors = [
     ".jobs-search-results__list-item",

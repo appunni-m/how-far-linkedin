@@ -12,7 +12,7 @@ How Far? adds an office address and estimated home-to-office driving distance di
 
 ## How it works
 
-- The extension reads job cards on LinkedIn `/jobs/search/` and `/jobs/collections/` pages.
+- The extension reads job cards on LinkedIn `/jobs/search/`, `/jobs/search-results/`, and `/jobs/collections/` pages.
 - It searches Google Places for the employer's office in the job's city and asks for route summaries from your home location.
 - It displays the closest office result with its address, road distance, and estimated drive time. The route summary does not include live traffic.
 - If a company does not have a suitable Google Maps office listing, the card reports that no office was found.
