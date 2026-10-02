@@ -5,7 +5,8 @@
     ".jobs-search-results__list-item",
     "li[data-occludable-job-id]",
     "li[data-job-id]",
-    ".job-card-container"
+    ".job-card-container",
+    "[role='button']"
   ];
   let scanTimer = null;
   let noticeHost = null;
@@ -18,7 +19,8 @@
     return element.closest(".jobs-search-results__list-item") ||
       element.closest("li[data-occludable-job-id]") ||
       element.closest("li[data-job-id]") ||
-      element.closest(".job-card-container") || element;
+      element.closest(".job-card-container") ||
+      element.closest("[role='button']") || element;
   }
 
   function findCards() {
@@ -26,7 +28,9 @@
     for (const selector of cardSelectors) {
       for (const element of document.querySelectorAll(selector)) {
         const card = normalizeCard(element);
-        if (isVisible(card) && card.querySelector("a[href*='/jobs/view/']")) cards.add(card);
+        const hasDismissControl = card.querySelector("button[aria-label^='Dismiss ']");
+        const hasJobLink = card.querySelector("a[href*='/jobs/view/']");
+        if (isVisible(card) && (hasDismissControl || hasJobLink)) cards.add(card);
       }
     }
     return [...cards];
@@ -46,7 +50,17 @@
     }
 
     const companyLink = [...card.querySelectorAll("a[href*='/company/']")].find(isVisible);
-    return clean(companyLink?.innerText || companyLink?.getAttribute("aria-label") || "").split("\n")[0];
+    const linkedCompany = clean(companyLink?.innerText || companyLink?.getAttribute("aria-label") || "").split("\n")[0];
+    if (linkedCompany) return linkedCompany;
+
+    // LinkedIn's current search results render title, company, and location as
+    // the first three visible paragraphs in each dismissible job card.
+    const paragraphs = [...card.querySelectorAll("p")]
+      .filter(isVisible)
+      .map((element) => clean(element.innerText || element.textContent))
+      .filter(Boolean);
+    const company = paragraphs[1]?.split("\n")[0] || "";
+    return company.length < 100 ? company : "";
   }
 
   function cityFor(card) {
@@ -76,6 +90,13 @@
         if (selector.includes("metadata-item")) return text;
       }
     }
+
+    // The current LinkedIn card layout keeps its location in paragraph three.
+    const paragraphs = [...card.querySelectorAll("p")]
+      .filter(isVisible)
+      .map((element) => clean(element.innerText || element.textContent))
+      .filter(Boolean);
+    if (paragraphs.length >= 3) return valid(paragraphs[2]);
     return "";
   }
 
