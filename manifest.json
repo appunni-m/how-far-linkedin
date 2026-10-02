@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "How Far? for LinkedIn",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Show local company office addresses and home-to-office distances on LinkedIn job search pages.",
   "permissions": [
     "storage"

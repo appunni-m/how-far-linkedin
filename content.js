@@ -104,28 +104,87 @@
     return `${lower(company)}|${lower(city)}`;
   }
 
+  function resultContainerFor(card) {
+    const company = companyFor(card);
+    const city = cityFor(card);
+    const includesListingDetails = (element) => {
+      const text = lower(element.innerText || element.textContent);
+      return (!company || text.includes(lower(company))) && (!city || text.includes(lower(city)));
+    };
+
+    // LinkedIn's current cards use a flex row for the logo and a flex-column
+    // for the title/company/location. Prefer that column, even when the
+    // title isn't an anchor or paragraph in the card's DOM.
+    const detailsColumn = [...card.children].find((element) => {
+      if (!isVisible(element) || !includesListingDetails(element)) return false;
+      const style = getComputedStyle(element);
+      return style.display === "flex" && style.flexDirection === "column";
+    });
+    if (detailsColumn) return detailsColumn;
+
+    const jobLink = [...card.querySelectorAll("a[href*='/jobs/view/']")].find(isVisible);
+    const paragraphs = [...card.querySelectorAll("p")].filter(isVisible);
+    const titleElement = jobLink || [...card.querySelectorAll(
+      "[class*='job-title'], [class*='primary-description'], h3, h4"
+    )].find(isVisible) || paragraphs[0];
+    if (!titleElement) return card;
+
+    const findField = (value, allowSuffix = false) => {
+      if (!value) return null;
+      const expected = lower(value);
+      return [...card.querySelectorAll("a, p, span, div")].find((element) => {
+        if (!isVisible(element)) return false;
+        const text = lower(element.innerText || element.textContent);
+        return text === expected || (allowSuffix && text.startsWith(`${expected} `));
+      }) || null;
+    };
+
+    const companyElement = findField(company) || paragraphs[1];
+    const cityElement = findField(city, true) || paragraphs[2];
+    if (companyElement && cityElement) {
+      // Insert below the title/company/location text column. Appending to the
+      // outer LinkedIn card can make its flex layout put the result beside the
+      // text and squeeze the job title into a very narrow column.
+      for (let parent = titleElement.parentElement; parent && parent !== card; parent = parent.parentElement) {
+        if (parent.contains(companyElement) && parent.contains(cityElement)) return parent;
+      }
+    }
+
+    const preferred = card.querySelector(
+      "[class*='primary-description'], [class*='job-card-list__entity-lockup'], [class*='job-card-container__content']"
+    );
+    if (preferred?.contains(titleElement)) return preferred;
+
+    // Last fallback: place inside the nearest block wrapper that holds the
+    // title instead of adding a new flex item to the card's outer row.
+    for (let parent = titleElement.parentElement; parent && parent !== card; parent = parent.parentElement) {
+      if (/^(DIV|SECTION|ARTICLE)$/.test(parent.tagName)) return parent;
+    }
+    return card;
+  }
+
   function createResultHost(card) {
     const host = document.createElement("div");
     host.dataset.howFarResult = "true";
     const shadow = host.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
-      :host { display:block; margin:8px 0 2px; font-family:Arial,sans-serif; }
-      .row { display:flex; align-items:flex-start; gap:9px; padding:9px 10px; border:1px solid #d6e9df; border-radius:9px; background:#f3faf6; color:#20372b; }
-      .pin { flex:0 0 auto; width:18px; height:18px; border-radius:50%; background:#d9efe2; color:#167449; font-size:12px; font-weight:700; line-height:18px; text-align:center; }
-      .content { min-width:0; flex:1; }
-      .distance { display:block; color:#176b46; font-size:12px; font-weight:700; line-height:1.3; }
+      :host { display:block; width:100%; max-width:100%; box-sizing:border-box; margin:8px 0 2px; font-family:Arial,sans-serif; }
+      .row { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; column-gap:8px; padding:9px; border:1px solid #d6e9df; border-radius:9px; background:#f3faf6; color:#20372b; box-sizing:border-box; }
+      .pin { grid-column:1; grid-row:1; width:18px; height:18px; border-radius:50%; background:#d9efe2; color:#167449; font-size:12px; font-weight:700; line-height:18px; text-align:center; }
+      .content { grid-column:2; min-width:0; }
+      .distance { display:block; color:#176b46; font-size:12px; font-weight:700; line-height:1.35; }
       .offices { display:grid; gap:6px; margin-top:7px; }
-      .office-item { display:flex; align-items:flex-start; gap:7px; padding:6px 7px; border-left:3px solid var(--accent); border-radius:6px; background:var(--tint); }
+      .office-item { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:start; gap:7px; padding:7px; border-left:3px solid var(--accent); border-radius:6px; background:var(--tint); box-sizing:border-box; }
       .number { flex:0 0 auto; width:17px; height:17px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:700; line-height:17px; text-align:center; }
-      .office-content { min-width:0; }
-      .office-distance { display:block; color:#23372d; font-size:10px; font-weight:700; line-height:1.35; }
-      .office-name { display:block; margin-top:2px; color:#40564a; font-size:10px; line-height:1.35; }
-      .office-address { display:block; margin-top:2px; color:#59695f; font-size:9px; line-height:1.35; overflow-wrap:anywhere; }
+      .office-content { min-width:0; overflow-wrap:break-word; }
+      .office-distance { display:block; color:#23372d; font-size:11px; font-weight:700; line-height:1.4; }
+      .office-name { display:block; margin-top:2px; color:#40564a; font-size:11px; line-height:1.4; }
+      .office-address { display:block; margin-top:2px; color:#59695f; font-size:10px; line-height:1.4; }
       .loading .distance { color:#66756c; font-weight:600; }
       .error { border-color:#eedbd8; background:#fff8f7; }
       .error .distance { color:#9b473d; }
-      .attribution { flex:0 0 auto; align-self:flex-end; color:#7b8780; font-size:8px; white-space:nowrap; }
+      .attribution { grid-column:2; justify-self:end; margin-top:5px; color:#7b8780; font-size:9px; white-space:nowrap; }
       .g { font-weight:700; letter-spacing:-.2px; background:linear-gradient(90deg,#4285f4 0 22%,#ea4335 22% 43%,#fbbc05 43% 63%,#4285f4 63% 79%,#34a853 79% 91%,#ea4335 91%); color:transparent; background-clip:text; -webkit-background-clip:text; }
     `;
     const row = document.createElement("div");
@@ -147,7 +206,7 @@
     attribution.innerHTML = '<span class="g">Google</span> Maps';
     row.append(pin, content, attribution);
     shadow.append(style, row);
-    card.append(host);
+    resultContainerFor(card).append(host);
     return { host, row, distance, offices };
   }
 
@@ -240,7 +299,7 @@
 
     const pending = new Map();
     for (const card of findCards()) {
-      if (card.querySelector(":scope > [data-how-far-result='true']")) continue;
+      if (card.querySelector("[data-how-far-result='true']")) continue;
       const rect = card.getBoundingClientRect();
       if (rect.bottom < -150 || rect.top > window.innerHeight + 350) continue;
 

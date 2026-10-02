@@ -94,6 +94,10 @@ input:focus { border-color: #4d9f7c; box-shadow: 0 0 0 3px rgba(48, 144, 100, .1
 #pricingRegion { max-width: 132px; height: 29px; padding: 0 7px; border: 1px solid #dce4df; border-radius: 7px; background: #fff; color: #33433a; font-size: 9px; }
 .pricing-rates { margin: 7px 0 0; color: #87938b; font-size: 8px; line-height: 1.4; }
 .metrics-note { margin: 8px 0 0; color: #7f8a83; font-size: 8px; line-height: 1.5; }
+.cache-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; padding-top: 8px; border-top: 1px solid #edf1ee; color: #718078; font-size: 9px; }
+.cache-summary strong { color: #33433a; }
+.cache-summary button { padding: 4px 7px; border: 1px solid #dce4df; border-radius: 6px; background: #fff; color: #59695f; font-size: 8px; font-weight: 650; cursor: pointer; }
+.cache-summary button:hover { border-color: #c6d3ca; background: #f7faf8; }
 .metrics-links { display: flex; gap: 12px; margin-top: 8px; }
 .metrics-links a { color: #267852; font-size: 8px; font-weight: 650; text-decoration: none; }
 .metrics-links a:hover { text-decoration: underline; }

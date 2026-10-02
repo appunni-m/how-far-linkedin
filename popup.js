@@ -4,6 +4,8 @@ const saveButton = document.querySelector("#saveSetup");
 const status = document.querySelector("#status");
 const pricingRegion = document.querySelector("#pricingRegion");
 const USAGE_STORAGE_KEY = "howFarUsageV1";
+const PLACES_RESPONSE_CACHE_STORAGE_KEY = "howFarPlacesResponseCacheV1";
+const clearCacheButton = document.querySelector("#clearCache");
 const PRICE_TABLES = {
   global: {
     label: "Global",
@@ -53,6 +55,8 @@ const usageElements = {
   estimatedCost: document.querySelector("#estimatedCost"),
   requestsSent: document.querySelector("#requestsSent"),
   successfulRequests: document.querySelector("#successfulRequests"),
+  cacheHits: document.querySelector("#cacheHits"),
+  cachedQueries: document.querySelector("#cachedQueries"),
   homeDetail: document.querySelector("#homeUsageDetail"),
   homeCost: document.querySelector("#homeUsageCost"),
   homeMeter: document.querySelector("#homeUsageMeter"),
@@ -121,6 +125,7 @@ function renderUsage() {
   const officeEvents = asCount(successful.officeTextSearchEnterpriseAtmosphere);
   const sentTotal = asCount(sent.homeTextSearchPro) + asCount(sent.officeTextSearchEnterpriseAtmosphere);
   const successfulTotal = homeEvents + officeEvents;
+  const cacheHitTotal = asCount(usage.cacheHits?.homeTextSearchPro) + asCount(usage.cacheHits?.officeTextSearchEnterpriseAtmosphere);
 
   const homeCost = renderSkuUsage({
     detail: usageElements.homeDetail,
@@ -136,6 +141,7 @@ function renderUsage() {
   usageElements.estimatedCost.textContent = formatUSD(homeCost + officeCost);
   usageElements.requestsSent.textContent = sentTotal.toLocaleString();
   usageElements.successfulRequests.textContent = successfulTotal.toLocaleString();
+  usageElements.cacheHits.textContent = cacheHitTotal.toLocaleString();
   usageElements.pricingRates.textContent = `First paid tier after free usage: ${formatUSD(table.home.tiers[0].dollarsPerThousand)} / 1,000 home searches; ${formatUSD(table.office.tiers[0].dollarsPerThousand)} / 1,000 office route searches.`;
   usageElements.pricingLink.href = table.pricingUrl;
 }
@@ -150,11 +156,28 @@ async function loadSetup() {
 }
 
 async function loadMetrics() {
-  const saved = await chrome.storage.local.get([USAGE_STORAGE_KEY, "pricingRegion"]);
+  const saved = await chrome.storage.local.get([USAGE_STORAGE_KEY, "pricingRegion", PLACES_RESPONSE_CACHE_STORAGE_KEY]);
   currentUsage = saved[USAGE_STORAGE_KEY] || null;
+  usageElements.cachedQueries.textContent = Object.keys(saved[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {}).length.toLocaleString();
   pricingRegion.value = PRICE_TABLES[saved.pricingRegion] ? saved.pricingRegion : "global";
   renderUsage();
 }
+
+clearCacheButton.addEventListener("click", async () => {
+  const saved = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+  const cache = saved[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {};
+  const count = Object.keys(cache).length;
+  if (!count) {
+    status.textContent = "There are no saved query results to clear.";
+    delete status.dataset.tone;
+    return;
+  }
+
+  if (!window.confirm(`Clear ${count} saved query results? Their next use will send requests to Google.`)) return;
+  await chrome.storage.local.remove(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+  status.textContent = "Saved query results cleared. The next lookup will contact Google.";
+  delete status.dataset.tone;
+});
 
 saveButton.addEventListener("click", async () => {
   const homeLocation = homeInput.value.trim();
@@ -177,6 +200,9 @@ pricingRegion.addEventListener("change", async () => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
+  if (changes[PLACES_RESPONSE_CACHE_STORAGE_KEY]) {
+    usageElements.cachedQueries.textContent = Object.keys(changes[PLACES_RESPONSE_CACHE_STORAGE_KEY].newValue || {}).length.toLocaleString();
+  }
   if (changes[USAGE_STORAGE_KEY]) {
     currentUsage = changes[USAGE_STORAGE_KEY].newValue || null;
     renderUsage();

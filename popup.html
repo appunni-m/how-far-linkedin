@@ -50,8 +50,9 @@
           <span class="currency">USD</span>
         </div>
         <div class="request-summary">
-          <span><strong id="requestsSent">0</strong> requests sent</span>
+          <span><strong id="requestsSent">0</strong> sent</span>
           <span><strong id="successfulRequests">0</strong> successful</span>
+          <span><strong id="cacheHits">0</strong> cache hits</span>
         </div>
 
         <div class="sku-usage">
@@ -82,7 +83,11 @@
           </select>
         </div>
         <p id="pricingRates" class="pricing-rates">After free usage: $32 and $40 per 1,000 requests.</p>
-        <p class="metrics-note">Tracking starts after v0.2.4 is loaded; earlier use isn’t included. Successful API requests count as billable events. This estimate assumes the extension is the only usage on your billing account. Other projects share the free caps and volume tiers, so Google Cloud billing shows the actual amount.</p>
+        <p class="metrics-note">Only requests sent to Google count toward usage; cache hits skip the request. Request tracking starts in v0.2.4; cache-hit tracking starts in v0.2.5. This cost is an estimate: other projects share the free caps and volume tiers, so Google Cloud billing shows the actual amount.</p>
+        <div class="cache-summary">
+          <span><strong id="cachedQueries">0</strong> saved query results</span>
+          <button id="clearCache" type="button">Clear cache</button>
+        </div>
         <div class="metrics-links">
           <a id="pricingLink" href="https://developers.google.com/maps/billing-and-pricing/pricing" target="_blank" rel="noopener noreferrer">Google rate sheet</a>
           <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer">Cloud billing</a>
@@ -91,7 +96,7 @@
       </section>
 
       <aside class="privacy-note">
-        The key is stored locally, but browser storage can be inspected. Use a dedicated key restricted to Places API (New), set a quota, and don’t reuse a key from another app. Your home address is sent to Google for distance lookup.
+        Your key, home location, and saved query results are stored in this browser; browser storage can be inspected. Use a dedicated key restricted to Places API (New), set a quota, and don’t reuse a key from another app. Your home address is sent to Google for distance lookup.
       </aside>
     </main>
     <script src="popup.js"></script>

@@ -3,18 +3,21 @@ const OFFICE_FIELD_MASK = "places.displayName,places.formattedAddress,routingSum
 const HOME_FIELD_MASK = "places.location";
 const RATE_LIMIT_STORAGE_KEY = "howFarRequestRateV1";
 const USAGE_STORAGE_KEY = "howFarUsageV1";
+const PLACES_RESPONSE_CACHE_STORAGE_KEY = "howFarPlacesResponseCacheV1";
 const HOME_SEARCH_USAGE = "homeTextSearchPro";
 const OFFICE_SEARCH_USAGE = "officeTextSearchEnterpriseAtmosphere";
 const REQUEST_WINDOW_MS = 60_000;
 const MIN_REQUEST_GAP_MS = 1_000;
 const MAX_REQUESTS_PER_MINUTE = 30;
 const QUOTA_COOLDOWN_MS = 60_000;
+const MAX_CACHED_PLACES_RESPONSES = 500;
 
 let cachedHome = null;
 let homeLookupInFlight = null;
 let lastRequestAt = 0;
 let apiRequestQueue = Promise.resolve();
 const officeLookupInFlight = new Map();
+const placesRequestInFlight = new Map();
 
 function currentUsageMonth() {
   const now = new Date();
@@ -26,13 +29,7 @@ async function recordApiRequest(usageType, succeeded) {
     const month = currentUsageMonth();
     const stored = await chrome.storage.local.get(USAGE_STORAGE_KEY);
     const previous = stored[USAGE_STORAGE_KEY];
-    const usage = previous?.month === month
-      ? {
-          ...previous,
-          requestsSent: { ...(previous.requestsSent || {}) },
-          successfulRequests: { ...(previous.successfulRequests || {}) }
-        }
-      : { month, requestsSent: {}, successfulRequests: {} };
+    const usage = getMonthUsage(previous, month);
 
     usage.requestsSent[usageType] = (Number(usage.requestsSent[usageType]) || 0) + 1;
     if (succeeded) {
@@ -42,6 +39,73 @@ async function recordApiRequest(usageType, succeeded) {
     await chrome.storage.local.set({ [USAGE_STORAGE_KEY]: usage });
   } catch (_error) {
     // Metrics should never block a Places lookup.
+  }
+}
+
+function getMonthUsage(previous, month = currentUsageMonth()) {
+  return previous?.month === month
+    ? {
+        ...previous,
+        requestsSent: { ...(previous.requestsSent || {}) },
+        successfulRequests: { ...(previous.successfulRequests || {}) },
+        cacheHits: { ...(previous.cacheHits || {}) }
+      }
+    : { month, requestsSent: {}, successfulRequests: {}, cacheHits: {} };
+}
+
+async function recordCacheHit(usageType) {
+  try {
+    const month = currentUsageMonth();
+    const stored = await chrome.storage.local.get(USAGE_STORAGE_KEY);
+    const usage = getMonthUsage(stored[USAGE_STORAGE_KEY], month);
+    usage.cacheHits[usageType] = (Number(usage.cacheHits[usageType]) || 0) + 1;
+    usage.updatedAt = Date.now();
+    await chrome.storage.local.set({ [USAGE_STORAGE_KEY]: usage });
+  } catch (_error) {
+    // Cache usage metrics must never block a Places lookup.
+  }
+}
+
+async function placesRequestCacheKey(body, fieldMask) {
+  const request = JSON.stringify({ url: PLACES_SEARCH_URL, body, fieldMask });
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(request));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  } catch (_error) {
+    let first = 2166136261;
+    let second = 0x9e3779b1;
+    for (let index = 0; index < request.length; index += 1) {
+      const code = request.charCodeAt(index);
+      first = Math.imul(first ^ code, 16777619);
+      second = Math.imul(second ^ code, 2246822519);
+    }
+    return `local-${(first >>> 0).toString(16)}${(second >>> 0).toString(16)}`;
+  }
+}
+
+async function readCachedPlacesResponse(cacheKey) {
+  try {
+    const stored = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+    const entry = stored[PLACES_RESPONSE_CACHE_STORAGE_KEY]?.[cacheKey];
+    return entry ? { hit: true, payload: entry.payload } : { hit: false };
+  } catch (_error) {
+    return { hit: false };
+  }
+}
+
+async function cachePlacesResponse(cacheKey, payload) {
+  try {
+    const stored = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+    const entries = { ...(stored[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {}) };
+    entries[cacheKey] = { cachedAt: Date.now(), payload };
+    const newestFirst = Object.entries(entries)
+      .sort(([, a], [, b]) => (Number(b.cachedAt) || 0) - (Number(a.cachedAt) || 0))
+      .slice(0, MAX_CACHED_PLACES_RESPONSES);
+    await chrome.storage.local.set({
+      [PLACES_RESPONSE_CACHE_STORAGE_KEY]: Object.fromEntries(newestFirst)
+    });
+  } catch (_error) {
+    // Keep serving the live result if local storage is unavailable or full.
   }
 }
 
@@ -122,7 +186,20 @@ async function searchPlaces(textQuery, apiKey, fieldMask, routingOrigin, usageTy
     };
   }
 
-  return queuePlacesRequest(async () => {
+  const cacheKey = await placesRequestCacheKey(body, fieldMask);
+  const cached = await readCachedPlacesResponse(cacheKey);
+  if (cached.hit) {
+    await recordCacheHit(usageType);
+    return cached.payload;
+  }
+
+  const inFlight = placesRequestInFlight.get(cacheKey);
+  if (inFlight) {
+    await recordCacheHit(usageType);
+    return inFlight;
+  }
+
+  const promise = queuePlacesRequest(async () => {
     let response;
     try {
       response = await fetch(PLACES_SEARCH_URL, {
@@ -145,12 +222,20 @@ async function searchPlaces(textQuery, apiKey, fieldMask, routingOrigin, usageTy
         if (isQuotaError) await setQuotaCooldown(response);
         throw new Error(reason);
       }
+      await cachePlacesResponse(cacheKey, payload);
       return payload;
     } catch (error) {
       if (!response) await recordApiRequest(usageType, false);
       throw error;
     }
   });
+
+  placesRequestInFlight.set(cacheKey, promise);
+  try {
+    return await promise;
+  } finally {
+    if (placesRequestInFlight.get(cacheKey) === promise) placesRequestInFlight.delete(cacheKey);
+  }
 }
 
 async function getHomeCoordinates(homeLocation, apiKey) {
