@@ -4,7 +4,6 @@ const saveButton = document.querySelector("#saveSetup");
 const status = document.querySelector("#status");
 const pricingRegion = document.querySelector("#pricingRegion");
 const USAGE_STORAGE_KEY = "howFarUsageV1";
-const PLACES_RESPONSE_CACHE_STORAGE_KEY = "howFarPlacesResponseCacheV1";
 const clearCacheButton = document.querySelector("#clearCache");
 const PRICE_TABLES = {
   global: {
@@ -156,25 +155,34 @@ async function loadSetup() {
 }
 
 async function loadMetrics() {
-  const saved = await chrome.storage.local.get([USAGE_STORAGE_KEY, "pricingRegion", PLACES_RESPONSE_CACHE_STORAGE_KEY]);
+  const [saved, cacheStats] = await Promise.all([
+    chrome.storage.local.get([USAGE_STORAGE_KEY, "pricingRegion"]),
+    chrome.runtime.sendMessage({ type: "get-places-cache-stats" }).catch(() => null)
+  ]);
   currentUsage = saved[USAGE_STORAGE_KEY] || null;
-  usageElements.cachedQueries.textContent = Object.keys(saved[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {}).length.toLocaleString();
+  usageElements.cachedQueries.textContent = Number.isFinite(cacheStats?.count) ? cacheStats.count.toLocaleString() : "Unavailable";
   pricingRegion.value = PRICE_TABLES[saved.pricingRegion] ? saved.pricingRegion : "global";
   renderUsage();
 }
 
 clearCacheButton.addEventListener("click", async () => {
-  const saved = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
-  const cache = saved[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {};
-  const count = Object.keys(cache).length;
+  const cacheStats = await chrome.runtime.sendMessage({ type: "get-places-cache-stats" }).catch(() => null);
+  const count = Number.isFinite(cacheStats?.count) ? cacheStats.count : 0;
   if (!count) {
-    status.textContent = "There are no saved query results to clear.";
+    status.textContent = cacheStats?.ok === false
+      ? cacheStats.message || "Could not read the saved query count."
+      : "There are no saved query results to clear.";
     delete status.dataset.tone;
     return;
   }
 
   if (!window.confirm(`Clear ${count} saved query results? Their next use will send requests to Google.`)) return;
-  await chrome.storage.local.remove(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+  const result = await chrome.runtime.sendMessage({ type: "clear-places-cache" }).catch(() => null);
+  if (!result?.ok) {
+    status.textContent = result?.message || "Could not clear the saved query results.";
+    status.dataset.tone = "error";
+    return;
+  }
   status.textContent = "Saved query results cleared. The next lookup will contact Google.";
   delete status.dataset.tone;
 });
@@ -200,9 +208,6 @@ pricingRegion.addEventListener("change", async () => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes[PLACES_RESPONSE_CACHE_STORAGE_KEY]) {
-    usageElements.cachedQueries.textContent = Object.keys(changes[PLACES_RESPONSE_CACHE_STORAGE_KEY].newValue || {}).length.toLocaleString();
-  }
   if (changes[USAGE_STORAGE_KEY]) {
     currentUsage = changes[USAGE_STORAGE_KEY].newValue || null;
     renderUsage();
@@ -210,6 +215,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.pricingRegion && PRICE_TABLES[changes.pricingRegion.newValue]) {
     pricingRegion.value = changes.pricingRegion.newValue;
     renderUsage();
+  }
+});
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "places-cache-updated" && Number.isFinite(message.count)) {
+    usageElements.cachedQueries.textContent = message.count.toLocaleString();
   }
 });
 

@@ -4,13 +4,18 @@ const HOME_FIELD_MASK = "places.location";
 const RATE_LIMIT_STORAGE_KEY = "howFarRequestRateV1";
 const USAGE_STORAGE_KEY = "howFarUsageV1";
 const PLACES_RESPONSE_CACHE_STORAGE_KEY = "howFarPlacesResponseCacheV1";
+const PLACES_CACHE_DB_NAME = "howFarPlacesResponseCache";
+const PLACES_CACHE_DB_VERSION = 1;
+const PLACES_CACHE_STORE_NAME = "responses";
+const PLACES_CACHE_METADATA_STORE_NAME = "metadata";
+const LEGACY_CACHE_MIGRATION_KEY = "legacy-chrome-storage-cache-v1-migrated";
 const HOME_SEARCH_USAGE = "homeTextSearchPro";
 const OFFICE_SEARCH_USAGE = "officeTextSearchEnterpriseAtmosphere";
 const REQUEST_WINDOW_MS = 60_000;
 const MIN_REQUEST_GAP_MS = 1_000;
 const MAX_REQUESTS_PER_MINUTE = 30;
 const QUOTA_COOLDOWN_MS = 60_000;
-const MAX_CACHED_PLACES_RESPONSES = 500;
+const MAX_CACHED_PLACES_RESPONSES = 100_000;
 
 let cachedHome = null;
 let homeLookupInFlight = null;
@@ -18,6 +23,7 @@ let lastRequestAt = 0;
 let apiRequestQueue = Promise.resolve();
 const officeLookupInFlight = new Map();
 const placesRequestInFlight = new Map();
+let placesCacheDbPromise = null;
 
 function currentUsageMonth() {
   const now = new Date();
@@ -83,30 +89,159 @@ async function placesRequestCacheKey(body, fieldMask) {
   }
 }
 
+function idbRequestResult(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("IndexedDB request failed."));
+  });
+}
+
+function idbTransactionDone(transaction) {
+  const completion = new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error || new Error("IndexedDB transaction aborted."));
+    transaction.onerror = () => reject(transaction.error || new Error("IndexedDB transaction failed."));
+  });
+  // A related request can fail first; keep this rejection handled if its await is skipped.
+  completion.catch(() => {});
+  return completion;
+}
+
+async function migrateLegacyPlacesCache(db) {
+  const readTransaction = db.transaction(PLACES_CACHE_METADATA_STORE_NAME, "readonly");
+  const migrationValue = await idbRequestResult(
+    readTransaction.objectStore(PLACES_CACHE_METADATA_STORE_NAME).get(LEGACY_CACHE_MIGRATION_KEY)
+  );
+  await idbTransactionDone(readTransaction);
+
+  if (!migrationValue) {
+    const stored = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+    const legacyEntries = Object.entries(stored[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {});
+    const transaction = db.transaction(
+      [PLACES_CACHE_STORE_NAME, PLACES_CACHE_METADATA_STORE_NAME],
+      "readwrite"
+    );
+    const transactionDone = idbTransactionDone(transaction);
+    const responseStore = transaction.objectStore(PLACES_CACHE_STORE_NAME);
+    for (const [key, entry] of legacyEntries) {
+      if (entry && Object.prototype.hasOwnProperty.call(entry, "payload")) {
+        responseStore.put({
+          key,
+          cachedAt: Number(entry.cachedAt) || Date.now(),
+          payload: entry.payload
+        });
+      }
+    }
+    transaction.objectStore(PLACES_CACHE_METADATA_STORE_NAME).put(true, LEGACY_CACHE_MIGRATION_KEY);
+    await transactionDone;
+  }
+
+  // If the worker stopped after committing the migration marker, remove the old copy on next open.
+  await chrome.storage.local.remove(PLACES_RESPONSE_CACHE_STORAGE_KEY);
+}
+
+function openPlacesCacheDb() {
+  if (!placesCacheDbPromise) {
+    placesCacheDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(PLACES_CACHE_DB_NAME, PLACES_CACHE_DB_VERSION);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(PLACES_CACHE_STORE_NAME)) {
+          const responseStore = db.createObjectStore(PLACES_CACHE_STORE_NAME, { keyPath: "key" });
+          responseStore.createIndex("cachedAt", "cachedAt", { unique: false });
+        }
+        if (!db.objectStoreNames.contains(PLACES_CACHE_METADATA_STORE_NAME)) {
+          db.createObjectStore(PLACES_CACHE_METADATA_STORE_NAME);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Could not open the Places response cache."));
+      request.onblocked = () => reject(new Error("The Places response cache is blocked by another browser operation."));
+    }).then(async (db) => {
+      try {
+        await migrateLegacyPlacesCache(db);
+      } catch (_error) {
+        // A migration problem must not stop fresh API lookups or cache reads.
+      }
+      return db;
+    }).catch((error) => {
+      placesCacheDbPromise = null;
+      throw error;
+    });
+  }
+  return placesCacheDbPromise;
+}
+
 async function readCachedPlacesResponse(cacheKey) {
   try {
-    const stored = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
-    const entry = stored[PLACES_RESPONSE_CACHE_STORAGE_KEY]?.[cacheKey];
+    const db = await openPlacesCacheDb();
+    const transaction = db.transaction(PLACES_CACHE_STORE_NAME, "readonly");
+    const transactionDone = idbTransactionDone(transaction);
+    const entry = await idbRequestResult(transaction.objectStore(PLACES_CACHE_STORE_NAME).get(cacheKey));
+    await transactionDone;
     return entry ? { hit: true, payload: entry.payload } : { hit: false };
   } catch (_error) {
     return { hit: false };
   }
 }
 
+async function getPlacesCacheCount() {
+  const db = await openPlacesCacheDb();
+  const transaction = db.transaction(PLACES_CACHE_STORE_NAME, "readonly");
+  const transactionDone = idbTransactionDone(transaction);
+  const count = await idbRequestResult(transaction.objectStore(PLACES_CACHE_STORE_NAME).count());
+  await transactionDone;
+  return count;
+}
+
+async function notifyPlacesCacheUpdated(count) {
+  try {
+    await chrome.runtime.sendMessage({ type: "places-cache-updated", count });
+  } catch (_error) {
+    // The popup may not be open.
+  }
+}
+
 async function cachePlacesResponse(cacheKey, payload) {
   try {
-    const stored = await chrome.storage.local.get(PLACES_RESPONSE_CACHE_STORAGE_KEY);
-    const entries = { ...(stored[PLACES_RESPONSE_CACHE_STORAGE_KEY] || {}) };
-    entries[cacheKey] = { cachedAt: Date.now(), payload };
-    const newestFirst = Object.entries(entries)
-      .sort(([, a], [, b]) => (Number(b.cachedAt) || 0) - (Number(a.cachedAt) || 0))
-      .slice(0, MAX_CACHED_PLACES_RESPONSES);
-    await chrome.storage.local.set({
-      [PLACES_RESPONSE_CACHE_STORAGE_KEY]: Object.fromEntries(newestFirst)
-    });
+    const db = await openPlacesCacheDb();
+    const transaction = db.transaction(PLACES_CACHE_STORE_NAME, "readwrite");
+    const transactionDone = idbTransactionDone(transaction);
+    const responseStore = transaction.objectStore(PLACES_CACHE_STORE_NAME);
+    responseStore.put({ key: cacheKey, cachedAt: Date.now(), payload });
+
+    const count = await idbRequestResult(responseStore.count());
+    let toRemove = count - MAX_CACHED_PLACES_RESPONSES;
+    if (toRemove > 0) {
+      await new Promise((resolve, reject) => {
+        const cursorRequest = responseStore.index("cachedAt").openCursor();
+        cursorRequest.onerror = () => reject(cursorRequest.error || new Error("Could not trim the Places response cache."));
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (!cursor || toRemove <= 0) {
+            resolve();
+            return;
+          }
+          cursor.delete();
+          toRemove -= 1;
+          cursor.continue();
+        };
+      });
+    }
+    await transactionDone;
+    await notifyPlacesCacheUpdated(Math.min(count, MAX_CACHED_PLACES_RESPONSES));
   } catch (_error) {
-    // Keep serving the live result if local storage is unavailable or full.
+    // Keep serving the live result if IndexedDB is unavailable or cannot store it.
   }
+}
+
+async function clearPlacesCache() {
+  const db = await openPlacesCacheDb();
+  const transaction = db.transaction(PLACES_CACHE_STORE_NAME, "readwrite");
+  const transactionDone = idbTransactionDone(transaction);
+  transaction.objectStore(PLACES_CACHE_STORE_NAME).clear();
+  await transactionDone;
+  await notifyPlacesCacheUpdated(0);
 }
 
 const pause = (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs));
@@ -332,6 +467,20 @@ async function lookupBatch(jobs) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "get-places-cache-stats") {
+    getPlacesCacheCount()
+      .then((count) => sendResponse({ ok: true, count }))
+      .catch((error) => sendResponse({ ok: false, message: error.message || "Could not read the saved query count." }));
+    return true;
+  }
+
+  if (message?.type === "clear-places-cache") {
+    clearPlacesCache()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, message: error.message || "Could not clear the saved query results." }));
+    return true;
+  }
+
   if (message?.type !== "lookup-office-distances") return false;
 
   lookupBatch(Array.isArray(message.jobs) ? message.jobs.slice(0, 10) : [])
